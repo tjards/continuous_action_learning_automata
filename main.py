@@ -115,6 +115,8 @@ class CALA:
             self.variance_history.append(variance_store)
             self.reward_history.append(reward_store)
 
+    # still plots
+    # -----------
     def plots(self):
  
         time_steps  = len(self.mean_history)
@@ -124,13 +126,16 @@ class CALA:
         mean_array      = np.array(self.mean_history)
         variance_array  = np.array(self.variance_history)
         reward_array    = np.array(self.reward_history)
+        
+        self.state_colors = []
 
         # Means
         # ----
         for state in range(self.num_states):
             # plot the means
-            line, = axs[0].plot(range(time_steps), mean_array[:, state])
+            line, = axs[0].plot(range(time_steps), mean_array[:, state], label=f"state {state}")
             line_color = line.get_color()
+            self.state_colors.append(line_color)  # Store the color
             axs[0].axhline(y=target_actions[state], color = line_color, linestyle='--')
             std_devs = np.sqrt(variance_array[:, state])
             axs[0].fill_between(np.arange(time_steps), mean_array[:, state] - std_devs, mean_array[:, state] + std_devs, color=line_color, alpha=0.3)
@@ -144,7 +149,7 @@ class CALA:
         # Variances
         # ---------
         for state in range(self.num_states):
-            axs[1].plot(range(time_steps), variance_array[:, state])
+            axs[1].plot(range(time_steps), variance_array[:, state], label=f"state {state}")
         axs[1].set_title('Action variance over time')
         axs[1].set_xlabel('Episodes')
         axs[1].set_ylabel('Variance')
@@ -161,6 +166,131 @@ class CALA:
 
         plt.tight_layout()
         plt.show()
+      
+    # plot Gaussian curves (PDFs) 
+    # ---------------------------
+    def plot_distributions_over_time(self, steps_to_plot=[0, 100, 250, 500, 750, 999]):
+        from scipy.stats import norm
+        x = np.linspace(self.action_min - 0.5, self.action_max + 0.5, 500)
+
+        fig, axs = plt.subplots(self.num_states, 1, figsize=(10, 3 * self.num_states))
+        #plt.subplots_adjust(hspace=0.4)  # Add this line to increase vertical spacing
+
+        mean_array = np.array(self.mean_history)
+        variance_array = np.array(self.variance_history)
+
+        for state in range(self.num_states):
+            ax = axs[state] if self.num_states > 1 else axs
+            color = self.state_colors[state] if hasattr(self, 'state_colors') else None
+
+            for idx, step in enumerate(steps_to_plot):
+                mu = mean_array[step, state]
+                var = variance_array[step, state]
+                sigma = np.sqrt(var)
+                y = norm.pdf(x, mu, sigma)
+
+                # Dynamic alpha for temporal fading
+                alpha = 0.1 + 0.8 * (idx / (len(steps_to_plot) - 1))
+
+                # Plot shaded area
+                ax.fill_between(x, y, color=color, alpha=alpha, label=f"step {step}" if idx == len(steps_to_plot)-1 else None)
+
+            ax.set_title(f"State {state} - Action distribution evolution")
+            ax.set_xlim(self.action_min - 0.5, self.action_max + 0.5)
+            ax.set_xlabel("Action value")
+            ax.set_ylabel("Probability density")
+            #ax.legend(loc='upper right')
+
+        plt.tight_layout()
+        plt.show()
+        
+    # show animation 
+    # ------------------    
+    def animate_distributions(self, interval=50, save_path=None):
+        import matplotlib.pyplot as plt
+        import matplotlib.animation as animation
+        from scipy.stats import norm
+        import numpy as np
+    
+        mean_array = np.array(self.mean_history)
+        variance_array = np.array(self.variance_history)
+        time_steps = len(mean_array)
+    
+        x = np.linspace(self.action_min - 0.5, self.action_max + 0.5, 500)
+    
+        # Compute global max PDF height for consistent y-axis limits
+        y_max = 0
+        for frame in range(time_steps):
+            for state in range(self.num_states):
+                mu = mean_array[frame, state]
+                sigma = np.sqrt(variance_array[frame, state])
+                if sigma > 0:
+                    peak = norm.pdf(mu, mu, sigma)
+                    y_max = max(y_max, peak)
+        y_max *= 1.1  # add 10% headroom
+    
+        fig, axs = plt.subplots(self.num_states, 1, figsize=(10, 3 * self.num_states))
+        plt.subplots_adjust(hspace=0.4)  # Add this line to increase vertical spacing
+        
+        if self.num_states == 1:
+            axs = [axs]
+    
+        lines = []
+        fills = []
+    
+        for state in range(self.num_states):
+            color = self.state_colors[state] if hasattr(self, 'state_colors') else None
+            ax = axs[state]
+            line, = ax.plot([], [], color=color)
+            fill = ax.fill_between(x, np.zeros_like(x), np.zeros_like(x), color=color, alpha=0.3)
+            lines.append(line)
+            fills.append(fill)
+            ax.set_xlim(self.action_min - 0.5, self.action_max + 0.5)
+            ax.set_ylim(0, y_max)
+            ax.set_title(f"State {state} - Action Probability Density over Time")
+            #ax.set_xlabel("Action value")
+            #ax.set_ylabel("Probability Density")
+    
+        # Add time label to the top subplot
+        time_text = axs[0].text(0.95, 0.95, '', transform=axs[0].transAxes,
+                                ha='right', va='top', fontsize=12, bbox=dict(facecolor='white', alpha=0.8))
+    
+        def init():
+            for line in lines:
+                line.set_data([], [])
+            time_text.set_text('')
+            return lines + [time_text]
+    
+        def update(frame):
+            for state in range(self.num_states):
+                mu = mean_array[frame, state]
+                sigma = np.sqrt(variance_array[frame, state])
+                y = norm.pdf(x, mu, sigma)
+                lines[state].set_data(x, y)
+    
+                fills[state].remove()
+                fills[state] = axs[state].fill_between(x, y, color=self.state_colors[state], alpha=0.3)
+    
+            time_text.set_text(f"Time step: {frame}/{time_steps}")
+            return lines + fills + [time_text]
+    
+        ani = animation.FuncAnimation(fig, update, frames=time_steps,
+                                      init_func=init, blit=False, interval=interval)
+    
+        self.ani = ani
+    
+        if save_path:
+            ani.save(save_path, writer='pillow', fps=1000 // interval)
+            #ani.save(save_path, writer='ffmpeg', fps=1000 // interval)
+        else:
+            plt.tight_layout()
+            plt.show()
+    
+        return ani
+
+
+
+
 
 #%% Example
 # --------
@@ -175,3 +305,8 @@ def environment(state, action):
 automata = CALA(num_states, action_min, action_max, learning_rate, means, variances)
 automata.run(num_episodes=1000, environment=environment)
 automata.plots()
+#automata.plot_distributions_over_time()
+anim = automata.animate_distributions(interval=50, save_path='animation.gif')
+
+
+
